@@ -1,0 +1,1452 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Call of Duty: WWII - Campaña Normandía 1944</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js Library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #08090a;
+            font-family: 'Oswald', sans-serif;
+            user-select: none;
+        }
+        #game-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .mono-font {
+            font-family: 'Share Tech Mono', monospace;
+        }
+        #damage-vignette {
+            box-shadow: inset 0 0 160px rgba(220, 20, 20, 0.9);
+            opacity: 0;
+            transition: opacity 0.15s ease-out;
+            pointer-events: none;
+        }
+        #damage-direction {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 200px;
+            height: 200px;
+            margin-top: -100px;
+            margin-left: -100px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease-out;
+            transform-origin: center center;
+        }
+        #damage-direction-arc {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            border: 6px solid transparent;
+            border-top-color: #ef4444;
+            filter: drop-shadow(0 0 10px #dc2626);
+        }
+        .hit-marker {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 28px;
+            height: 28px;
+            transform: translate(-50%, -50%) rotate(45deg);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.08s ease;
+        }
+        .hit-marker::before, .hit-marker::after {
+            content: '';
+            position: absolute;
+            background: #ffffff;
+            box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+        }
+        .hit-marker::before { width: 100%; height: 2.5px; top: 12.75px; left: 0; }
+        .hit-marker::after { width: 2.5px; height: 100%; top: 0; left: 12.75px; }
+
+        .crosshair-line {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 0 3px rgba(0,0,0,0.9);
+            transition: transform 0.05s ease-out;
+        }
+        #muzzle-flash-overlay {
+            pointer-events: none;
+            opacity: 0;
+            background: radial-gradient(circle at 50% 65%, rgba(255,220,130,0.45) 0%, rgba(0,0,0,0) 60%);
+            transition: opacity 0.03s ease-out;
+        }
+    </style>
+</head>
+<body class="relative overflow-hidden text-stone-200">
+
+    <!-- Main 3D WebGL Canvas -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Visual Overlays -->
+    <div id="damage-vignette" class="absolute inset-0 z-10"></div>
+    <div id="muzzle-flash-overlay" class="absolute inset-0 z-10"></div>
+    <div id="damage-direction" class="z-20"><div id="damage-direction-arc"></div></div>
+
+    <!-- HUD Overlay Layer -->
+    <div id="hud" class="absolute inset-0 z-20 pointer-events-none hidden">
+        
+        <!-- Compass Header -->
+        <div class="absolute top-4 left-1/2 -translate-x-1/2 bg-stone-900/90 border border-stone-700/80 px-8 py-1.5 rounded-lg text-stone-300 text-xs tracking-widest uppercase flex items-center gap-6 shadow-2xl backdrop-blur-md">
+            <span class="text-stone-500 font-bold">O</span>
+            <span id="compass-dir" class="font-bold text-amber-400 text-base mono-font">N 355°</span>
+            <span id="objective-distance" class="text-xs text-stone-400 font-mono">[OBJ: 45m]</span>
+            <span class="text-stone-500 font-bold">E</span>
+        </div>
+
+        <!-- Objective & Kill Feed Left -->
+        <div class="absolute top-5 left-6 flex flex-col gap-3 max-w-sm">
+            <div class="bg-stone-900/90 border-l-4 border-amber-500 p-3.5 rounded-r-lg backdrop-blur-md shadow-2xl border-stone-800">
+                <div class="text-[10px] text-amber-500 font-bold uppercase tracking-widest flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                    <span id="phase-title">FASE 1: OPERACIÓN NORMANDÍA</span>
+                </div>
+                <div id="objective-main" class="text-sm font-bold text-stone-100 uppercase mt-0.5">Sigue al Sargento Turner</div>
+                <div id="objective-sub" class="text-xs text-stone-400 mt-1 font-medium">
+                    Avanza junto a tu escuadrón por el desfiladero inicial.
+                </div>
+            </div>
+            <div id="kill-log" class="flex flex-col gap-1 text-xs mono-font"></div>
+        </div>
+
+        <!-- Subtitles & Radio Comms Overlay -->
+        <div id="subtitle-box" class="absolute bottom-24 left-1/2 -translate-x-1/2 max-w-xl w-full bg-stone-950/85 border border-stone-700/80 p-3 rounded-lg text-center backdrop-blur-md shadow-2xl transition-opacity duration-300 opacity-0">
+            <div id="subtitle-speaker" class="text-amber-400 text-xs font-bold uppercase tracking-widest mb-0.5">Sgto. Turner</div>
+            <div id="subtitle-text" class="text-stone-200 text-sm italic font-medium">"¡Mantengan la formación, Daniels! La carretera no está despejada."</div>
+        </div>
+
+        <!-- Crosshair & Hitmarker -->
+        <div id="crosshair-container" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 pointer-events-none">
+            <div id="ch-top" class="crosshair-line w-0.5 h-2.5 left-1/2 -translate-x-1/2 top-0"></div>
+            <div id="ch-bottom" class="crosshair-line w-0.5 h-2.5 left-1/2 -translate-x-1/2 bottom-0"></div>
+            <div id="ch-left" class="crosshair-line h-0.5 w-2.5 top-1/2 -translate-y-1/2 left-0"></div>
+            <div id="ch-right" class="crosshair-line h-0.5 w-2.5 top-1/2 -translate-y-1/2 right-0"></div>
+        </div>
+        <div id="hit-marker" class="hit-marker"></div>
+
+        <!-- Bottom Left Health Bar -->
+        <div class="absolute bottom-6 left-6 flex items-center gap-3 bg-stone-900/90 p-3 rounded-lg border border-stone-800 backdrop-blur-md shadow-xl">
+            <div class="w-8 h-8 rounded-full bg-stone-800 border border-stone-600 flex items-center justify-center text-emerald-400 font-black text-xl">
+                +
+            </div>
+            <div class="flex flex-col">
+                <div class="w-36 h-2.5 bg-stone-950 rounded overflow-hidden border border-stone-700/60 p-0.5">
+                    <div id="health-bar" class="h-full bg-emerald-500 rounded-sm transition-all duration-200 w-full"></div>
+                </div>
+            </div>
+            <span id="health-value" class="text-xs font-mono font-bold text-stone-300 ml-1">100 HP</span>
+        </div>
+
+        <!-- Bottom Right Squad & Ammo Displays -->
+        <div class="absolute bottom-6 right-6 flex items-end gap-4">
+            <!-- Squad Command Card -->
+            <div class="flex flex-col gap-2 pointer-events-none opacity-95">
+                <div class="bg-stone-900/90 border border-stone-700/80 rounded px-3 py-1.5 flex items-center gap-3 shadow-lg backdrop-blur-md">
+                    <div class="w-6 h-6 rounded bg-stone-800 flex items-center justify-center text-xs font-bold text-amber-400 border border-amber-500/40">F</div>
+                    <div class="text-[11px] font-bold tracking-wider text-stone-200 uppercase">Órdenes de Escuadrón <span id="squad-status-text" class="text-amber-400 font-normal">[AVANZAR]</span></div>
+                </div>
+                <div class="bg-stone-900/90 border border-stone-700/80 rounded px-2.5 py-1 flex items-center gap-2 shadow-lg backdrop-blur-md text-[10px]">
+                    <span class="text-stone-400 font-bold">Zussman:</span> <span id="zussman-state" class="text-emerald-400">En posición</span>
+                    <span class="text-stone-600">|</span>
+                    <span class="text-stone-400 font-bold">Turner:</span> <span id="turner-state" class="text-emerald-400">Liderando</span>
+                </div>
+            </div>
+
+            <!-- Weapon Ammo Display -->
+            <div class="bg-stone-900/95 p-3.5 rounded-lg border border-stone-800 text-right flex flex-col items-end min-w-[160px] shadow-2xl backdrop-blur-md">
+                <div id="weapon-name" class="text-xs font-bold text-amber-400 tracking-wider uppercase mb-0.5">M1 GARAND</div>
+                <div class="flex items-baseline gap-1">
+                    <span id="ammo-clip" class="text-4xl font-black mono-font text-stone-100">8</span>
+                    <span class="text-stone-500 text-lg">/</span>
+                    <span id="ammo-reserve" class="text-lg font-bold mono-font text-stone-400">48</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reload Banner -->
+        <div id="reload-msg" class="absolute bottom-28 left-1/2 -translate-x-1/2 text-amber-400 text-xs font-bold tracking-widest uppercase hidden bg-stone-900/90 border border-amber-600/60 px-5 py-1.5 rounded shadow-2xl animate-pulse backdrop-blur-md">
+            RECARGANDO MUNICIÓN...
+        </div>
+    </div>
+
+    <!-- Start Briefing Screen -->
+    <div id="start-screen" class="absolute inset-0 z-30 flex flex-col items-center justify-center bg-gradient-to-t from-stone-950 via-stone-900/95 to-stone-950 p-6 text-center">
+        <div class="max-w-2xl border border-stone-700/80 bg-stone-900/95 p-8 rounded-xl shadow-2xl backdrop-blur-lg">
+            <div class="inline-block px-3 py-1 bg-amber-600/20 border border-amber-600/40 text-amber-400 text-xs font-bold tracking-widest rounded uppercase mb-3">BRIEFING DE LA MISIÓN — NORMANDÍA 1944</div>
+            <h1 class="text-5xl font-black text-amber-500 tracking-wider uppercase mb-1 drop-shadow-lg">CALL OF DUTY: WWII</h1>
+            <h2 class="text-sm font-semibold text-stone-400 tracking-widest uppercase border-b border-stone-800 pb-4 mb-4">Operación Cobra — 1.ª División de Infantería ("Big Red One")</h2>
+
+            <div class="text-stone-300 text-xs text-left leading-relaxed mb-6 space-y-2 bg-stone-950/80 p-4 rounded border border-stone-800">
+                <p><strong class="text-amber-400">SITUACIÓN:</strong> Tras el desembarco, las fuerzas aliadas avanzan hacia el interior rural. El sector está defendido por patrullas del Eje y una posición fortificada con ametralladora pesada MG42.</p>
+                <p><strong class="text-amber-400">OBJETIVOS DE LA CAMPAÑA:</strong></p>
+                <ul class="list-disc list-inside space-y-1 text-stone-400 pl-2">
+                    <li>Avanza junto al Sargento Turner y Zussman por la carretera.</li>
+                    <li>Limpia la emboscada enemiga entre los vehículos blindados destruidos.</li>
+                    <li>Asalta la colina y despeja el búnker fortificado.</li>
+                    <li>Alcanza la zona de extracción para asegurar el sector.</li>
+                </ul>
+            </div>
+
+            <div class="grid grid-cols-2 gap-2 text-left bg-stone-950/90 p-3.5 rounded-lg border border-stone-800 text-xs mb-6 text-stone-300 mono-font">
+                <div><span class="text-amber-400 font-bold">[W, A, S, D]</span> Moverse (Deslizamiento)</div>
+                <div><span class="text-amber-400 font-bold">[RATÓN]</span> Apuntar / Mirar</div>
+                <div><span class="text-amber-400 font-bold">[CLIC IZQ]</span> Disparar</div>
+                <div><span class="text-amber-400 font-bold">[CLIC DER]</span> Apuntar Mira (ADS)</div>
+                <div><span class="text-amber-400 font-bold">[ESPACIO]</span> Saltar</div>
+                <div><span class="text-amber-400 font-bold">[C / CTRL]</span> Agacharse</div>
+                <div><span class="text-amber-400 font-bold">[R]</span> Recargar</div>
+                <div><span class="text-amber-400 font-bold">[F]</span> Cambiar Órdenes Escuadrón</div>
+                <div><span class="text-amber-400 font-bold">[1 - 4]</span> Cambiar Arma (Garand, Thompson, Kar98k, M1911)</div>
+            </div>
+
+            <button id="start-btn" class="w-full py-4 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black text-lg uppercase tracking-widest rounded-lg transition duration-200 cursor-pointer shadow-lg hover:shadow-amber-600/40">
+                INICIAR DESPLIEGUE TÁCTICO
+            </button>
+        </div>
+    </div>
+
+    <!-- Pause Screen -->
+    <div id="pause-screen" class="absolute inset-0 z-30 hidden flex flex-col items-center justify-center bg-stone-950/80 backdrop-blur-md">
+        <div class="bg-stone-900 border border-stone-700 p-8 rounded-xl text-center max-w-md shadow-2xl">
+            <h2 class="text-3xl font-black text-amber-500 tracking-wider mb-2 uppercase">JUEGO EN PAUSA</h2>
+            <p class="text-stone-400 text-xs mb-6">Haz clic para reanudar el control táctico del personaje.</p>
+            <button id="resume-btn" class="w-full py-3.5 bg-amber-600 hover:bg-amber-500 text-stone-950 font-extrabold uppercase tracking-widest rounded-lg transition cursor-pointer shadow-lg">
+                REANUDAR COMBATE
+            </button>
+        </div>
+    </div>
+
+    <!-- End Mission Screen -->
+    <div id="end-screen" class="absolute inset-0 z-30 hidden flex flex-col items-center justify-center bg-stone-950/95 p-6 text-center backdrop-blur-lg">
+        <div id="end-box" class="max-w-lg w-full border p-8 rounded-xl shadow-2xl bg-stone-900">
+            <h2 id="end-title" class="text-4xl font-black uppercase mb-1">MISIÓN COMPLETADA</h2>
+            <p id="end-subtitle" class="text-stone-400 text-xs mb-6">Sector Normandía asegurado con éxito.</p>
+            
+            <!-- Summary Stats -->
+            <div id="mission-stats" class="bg-stone-950 border border-stone-800 p-4 rounded-lg text-left text-xs space-y-2 font-mono text-stone-300 mb-6">
+                <div class="flex justify-between border-b border-stone-800 pb-1"><span>Bajas Enemigas Total:</span><span id="stat-kills" class="text-amber-400 font-bold">0</span></div>
+                <div class="flex justify-between border-b border-stone-800 pb-1"><span>Disparos a la Cabeza:</span><span id="stat-headshots" class="text-amber-400 font-bold">0</span></div>
+                <div class="flex justify-between border-b border-stone-800 pb-1"><span>Precisión de Tiro:</span><span id="stat-accuracy" class="text-amber-400 font-bold">0%</span></div>
+                <div class="flex justify-between"><span>Fases Completadas:</span><span id="stat-phases" class="text-emerald-400 font-bold">5/5</span></div>
+            </div>
+
+            <button id="restart-btn" class="w-full py-3.5 bg-amber-600 hover:bg-amber-500 text-stone-950 font-black uppercase tracking-widest rounded-lg transition cursor-pointer shadow-lg">
+                REINICIAR CAMPAÑA
+            </button>
+        </div>
+    </div>
+
+    <script>
+        /* =========================================================================
+           1. AUDIO SYNTHESIZER ENGINE (Procedural Sound Generator)
+           ========================================================================= */
+        class SoundEngine {
+            constructor() {
+                this.ctx = null;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            playShoot(type) {
+                this.init();
+                const now = this.ctx.currentTime;
+                const bufferSize = this.ctx.sampleRate * 0.32;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (this.ctx.sampleRate * 0.04));
+                }
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                const gain = this.ctx.createGain();
+
+                if (type === 'thompson' || type === 'mp40') {
+                    filter.frequency.setValueAtTime(2400, now);
+                    gain.gain.setValueAtTime(0.75, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.16);
+                } else if (type === 'kar98k') {
+                    filter.frequency.setValueAtTime(3800, now);
+                    gain.gain.setValueAtTime(1.2, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.38);
+                } else if (type === 'm1911') {
+                    filter.frequency.setValueAtTime(2800, now);
+                    gain.gain.setValueAtTime(0.7, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                } else { // M1 Garand
+                    filter.frequency.setValueAtTime(3200, now);
+                    gain.gain.setValueAtTime(1.0, now);
+                    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                }
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start(now);
+            }
+
+            playHitmarker(isHeadshot = false) {
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(isHeadshot ? 2100 : 1200, now);
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            }
+
+            playReload() {
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(450, now);
+                osc.frequency.exponentialRampToValueAtTime(190, now + 0.2);
+
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            }
+
+            playRadioChime() {
+                this.init();
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, now);
+                osc.frequency.setValueAtTime(1200, now + 0.08);
+
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+        }
+
+        /* =========================================================================
+           2. WEAPON STATS CONFIGURATION
+           ========================================================================= */
+        const WEAPONS = {
+            garand: {
+                name: 'M1 GARAND',
+                clipSize: 8,
+                reserveAmmo: 48,
+                currentClip: 8,
+                currentReserve: 48,
+                damage: 75,
+                fireRate: 220,
+                reloadTime: 1500,
+                spread: 0.008,
+                recoil: 0.028
+            },
+            thompson: {
+                name: 'THOMPSON M1A1',
+                clipSize: 30,
+                reserveAmmo: 120,
+                currentClip: 30,
+                currentReserve: 120,
+                damage: 36,
+                fireRate: 90,
+                reloadTime: 1800,
+                spread: 0.022,
+                recoil: 0.018
+            },
+            kar98k: {
+                name: 'KARABINER 98K',
+                clipSize: 5,
+                reserveAmmo: 30,
+                currentClip: 5,
+                currentReserve: 30,
+                damage: 115,
+                fireRate: 850,
+                reloadTime: 2200,
+                spread: 0.002,
+                recoil: 0.060
+            },
+            m1911: {
+                name: 'COLT M1911',
+                clipSize: 7,
+                reserveAmmo: 42,
+                currentClip: 7,
+                currentReserve: 42,
+                damage: 48,
+                fireRate: 180,
+                reloadTime: 1300,
+                spread: 0.015,
+                recoil: 0.022
+            }
+        };
+
+        /* =========================================================================
+           3. MAIN GAME ENGINE
+           ========================================================================= */
+        class GameEngine {
+            constructor() {
+                this.canvas = document.getElementById('game-canvas');
+                this.sound = new SoundEngine();
+
+                // Three.js Core
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.08, 450);
+                this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
+
+                // Atmosphere
+                this.scene.background = new THREE.Color(0x4a5056);
+                this.scene.fog = new THREE.FogExp2(0x4a5056, 0.008);
+
+                // Game Loop & State
+                this.isLocked = false;
+                this.isGameOver = false;
+                this.currentWeaponKey = 'garand';
+                this.isADS = false;
+                this.isReloading = false;
+                this.lastShotTime = 0;
+                
+                // Mission Campaign Stats
+                this.stats = {
+                    totalKills: 0,
+                    headshots: 0,
+                    shotsFired: 0,
+                    shotsHit: 0
+                };
+
+                // Campaign Phase Management (5 Phases)
+                this.currentPhase = 1;
+                this.phaseObjectives = [
+                    { phase: 1, title: "FASE 1: LLEGADA AL SECTOR", main: "Sigue al Sargento Turner", sub: "Avanza por el desfiladero con tu escuadrón.", targetPos: new THREE.Vector3(0, 0, -25) },
+                    { phase: 2, title: "FASE 2: ATAQUE EN LA CARRETERA", main: "Neutraliza las patrullas enemigas", sub: "Limpia los tiradores alemanes entre los blindados (0/4 bajas).", targetPos: new THREE.Vector3(0, 0, -65) },
+                    { phase: 3, title: "FASE 3: REAGRUPAMIENTO TÁCTICO", main: "Reúnete con el Sargento Turner", sub: "Punto de encuentro en las ruinas de la granja.", targetPos: new THREE.Vector3(-4, 0, -78) },
+                    { phase: 4, title: "FASE 4: ASALTO AL BÚNKER", main: "Despeja el nido de ametralladoras", sub: "Elimina a la guarnición del búnker fortificado.", targetPos: new THREE.Vector3(0, 0, -115) },
+                    { phase: 5, title: "FASE 5: EXTRACTION & VICTORIA", main: "Asegura la zona de extracción", sub: "Punto final de control alcanzado.", targetPos: new THREE.Vector3(0, 0, -135) }
+                ];
+                this.phaseKillsCount = 0;
+
+                // Player Physics Parameters
+                this.player = {
+                    health: 100,
+                    position: new THREE.Vector3(0, 1.76, 12),
+                    velocity: new THREE.Vector3(0, 0, 0),
+                    radius: 0.40,
+                    standingHeight: 1.76,
+                    crouchHeight: 1.05,
+                    currentHeight: 1.76,
+                    eyeHeight: 1.62,
+                    speed: 6.2,
+                    sprintSpeed: 9.5,
+                    crouchSpeed: 3.2,
+                    gravity: -22.0,
+                    jumpForce: 7.2,
+                    isOnGround: true,
+                    isCrouching: false
+                };
+
+                this.keys = { w: false, a: false, s: false, d: false, shift: false, space: false, c: false };
+                this.colliders = [];        // Solid Bounding Boxes for physics
+                this.enemies = [];          // Enemy AI list
+                this.allies = [];           // Squad Ally AI list
+                this.hitboxes = [];         // Raycast hitboxes for combat
+                this.planes = [];
+                this.fireLightAnims = [];
+                this.squadOrderState = "AVANZAR"; // "AVANZAR", "MANTENER", "REAGRUPAR"
+
+                this.initEngine();
+                this.buildMapEnvironment();
+                this.setupFPSViewmodel();
+                this.spawnSquadAllies();
+                this.spawnEnemies();
+                this.bindEvents();
+
+                this.triggerSubtitle("Sgto. Turner", "¡Mantengan la formación, Daniels! La carretera principal está delante.", 4500);
+
+                window.addEventListener('resize', () => this.onWindowResize());
+                this.animate(0);
+            }
+
+            initEngine() {
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+                // Lighting
+                const sun = new THREE.DirectionalLight(0xdde3da, 1.15);
+                sun.position.set(40, 80, -30);
+                sun.castShadow = true;
+                sun.shadow.mapSize.width = 2048;
+                sun.shadow.mapSize.height = 2048;
+                this.scene.add(sun);
+
+                const ambient = new THREE.AmbientLight(0x707780, 0.85);
+                this.scene.add(ambient);
+
+                this.camera.position.copy(this.player.position);
+            }
+
+            /* =========================================================================
+               4. MAP ENVIRONMENT & SOLID COLLIDERS
+               ========================================================================= */
+            buildMapEnvironment() {
+                // Dirt Terrain
+                const groundGeo = new THREE.PlaneGeometry(120, 320);
+                const groundMat = new THREE.MeshStandardMaterial({ color: 0x3d372e, roughness: 0.9 });
+                const ground = new THREE.Mesh(groundGeo, groundMat);
+                ground.rotation.x = -Math.PI / 2;
+                ground.receiveShadow = true;
+                this.scene.add(ground);
+
+                // --- BOUNDARY WALL COLLIDERS ---
+                this.registerCollider(new THREE.Box3(new THREE.Vector3(-18, 0, -160), new THREE.Vector3(-14, 10, 20))); // Left
+                this.registerCollider(new THREE.Box3(new THREE.Vector3(14, 0, -160), new THREE.Vector3(18, 10, 20)));   // Right
+                this.registerCollider(new THREE.Box3(new THREE.Vector3(-18, 0, 15), new THREE.Vector3(18, 10, 18)));    // Back
+                this.registerCollider(new THREE.Box3(new THREE.Vector3(-18, 0, -155), new THREE.Vector3(18, 10, -150)));// Forward
+
+                // Visual Ruin Wall Boundaries
+                this.buildConcreteWall(-15, 0, -65, 2, 4, 130);
+                this.buildConcreteWall(15, 0, -65, 2, 4, 130);
+
+                // Sandbag Barricades & Cover
+                this.buildSandbags(-3, 0, 0, 0);
+                this.buildSandbags(4, 0, -15, Math.PI / 4);
+                this.buildSandbags(-5, 0, -38, -Math.PI / 6);
+                this.buildSandbags(3, 0, -58, 0);
+                this.buildSandbags(-4, 0, -85, Math.PI / 8);
+
+                // Crates & Barrels
+                this.buildCrateCluster(-2.5, 0, -8);
+                this.buildCrateCluster(5.5, 0, -32);
+                this.buildCrateCluster(-6, 0, -70);
+
+                // Czech Hedgehogs
+                for (let z = 5; z > -130; z -= 14) {
+                    this.buildHedgehog(-7 - Math.random() * 2, 0, z);
+                    this.buildHedgehog(7 + Math.random() * 2, 0, z - 5);
+                }
+
+                // Trees & Telegraph Poles
+                for (let i = 0; i < 40; i++) {
+                    const side = (i % 2 === 0) ? 1 : -1;
+                    const x = side * (6 + Math.random() * 18);
+                    const z = 10 - Math.random() * 140;
+                    this.buildTree(x, 0, z);
+                }
+
+                // Wrecked Vehicles
+                this.buildArmoredCar(-6, 0, -22, Math.PI / 6);
+                this.buildShermanTank(8, 0, -48, -Math.PI / 4);
+                this.buildHalfTrack(-7, 0, -75, Math.PI / 3);
+
+                // Fortified German Bunker (Phase 4 Target)
+                this.buildBunkerStructure(0, 0, -120);
+            }
+
+            registerCollider(box3) {
+                this.colliders.push(box3);
+            }
+
+            buildConcreteWall(x, y, z, w, h, d) {
+                const mat = new THREE.MeshStandardMaterial({ color: 0x484b48, roughness: 0.9 });
+                const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+                mesh.position.set(x, y + h / 2, z);
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                this.scene.add(mesh);
+            }
+
+            buildSandbags(x, y, z, rotY) {
+                const group = new THREE.Group();
+                group.position.set(x, y, z);
+                group.rotation.y = rotY;
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x82755b, roughness: 0.9 });
+                for (let row = 0; row < 3; row++) {
+                    for (let i = -2; i <= 2; i++) {
+                        const bag = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.3, 0.45), mat);
+                        bag.position.set(i * 0.7, row * 0.28 + 0.15, (row % 2) * 0.05);
+                        bag.castShadow = true;
+                        group.add(bag);
+                    }
+                }
+                this.scene.add(group);
+                this.registerCollider(new THREE.Box3().setFromObject(group));
+            }
+
+            buildCrateCluster(x, y, z) {
+                const group = new THREE.Group();
+                group.position.set(x, y, z);
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x5c4936, roughness: 0.8 });
+                const c1 = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), mat);
+                c1.position.set(0, 0.55, 0);
+                c1.castShadow = true;
+                group.add(c1);
+
+                const c2 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, 0.9), mat);
+                c2.position.set(0.95, 0.45, 0.1);
+                c2.castShadow = true;
+                group.add(c2);
+
+                this.scene.add(group);
+                this.registerCollider(new THREE.Box3().setFromObject(group));
+            }
+
+            buildHedgehog(x, y, z) {
+                const group = new THREE.Group();
+                group.position.set(x, y + 0.8, z);
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x2e2f30, roughness: 0.5, metalness: 0.7 });
+                const beamGeo = new THREE.BoxGeometry(0.25, 0.25, 2.4);
+
+                const b1 = new THREE.Mesh(beamGeo, mat); b1.rotation.x = Math.PI / 4;
+                const b2 = new THREE.Mesh(beamGeo, mat); b2.rotation.x = -Math.PI / 4;
+                const b3 = new THREE.Mesh(beamGeo, mat); b3.rotation.y = Math.PI / 2;
+
+                group.add(b1); group.add(b2); group.add(b3);
+                this.scene.add(group);
+                this.registerCollider(new THREE.Box3().setFromObject(group));
+            }
+
+            buildTree(x, y, z) {
+                const group = new THREE.Group();
+                group.position.set(x, y, z);
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x2e2822, roughness: 0.9 });
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.32, 7.5, 8), mat);
+                trunk.position.y = 3.75;
+                trunk.castShadow = true;
+                group.add(trunk);
+
+                this.scene.add(group);
+                this.registerCollider(new THREE.Box3(
+                    new THREE.Vector3(x - 0.35, y, z - 0.35),
+                    new THREE.Vector3(x + 0.35, y + 7.5, z + 0.35)
+                ));
+            }
+
+            buildArmoredCar(x, y, z, rotY) {
+                const car = new THREE.Group();
+                car.position.set(x, y, z);
+                car.rotation.y = rotY;
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x3d4038, roughness: 0.6, metalness: 0.4 });
+                const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.3, 4.4), mat);
+                body.position.y = 0.9;
+                car.add(body);
+
+                this.scene.add(car);
+                this.registerCollider(new THREE.Box3().setFromObject(car));
+                this.addFireEffect(x, y + 1.2, z);
+            }
+
+            buildShermanTank(x, y, z, rotY) {
+                const tank = new THREE.Group();
+                tank.position.set(x, y, z);
+                tank.rotation.y = rotY;
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x353a31, roughness: 0.6, metalness: 0.4 });
+                const hull = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.6, 6.0), mat);
+                hull.position.y = 1.1;
+                tank.add(hull);
+
+                const turret = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.0, 2.4), mat);
+                turret.position.set(0, 2.1, -0.2);
+                tank.add(turret);
+
+                this.scene.add(tank);
+                this.registerCollider(new THREE.Box3().setFromObject(tank));
+                this.addFireEffect(x, y + 1.8, z);
+            }
+
+            buildHalfTrack(x, y, z, rotY) {
+                const ht = new THREE.Group();
+                ht.position.set(x, y, z);
+                ht.rotation.y = rotY;
+
+                const mat = new THREE.MeshStandardMaterial({ color: 0x423f38, roughness: 0.7 });
+                const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.4, 4.2), mat);
+                body.position.y = 0.9;
+                ht.add(body);
+
+                this.scene.add(ht);
+                this.registerCollider(new THREE.Box3().setFromObject(ht));
+            }
+
+            buildBunkerStructure(x, y, z) {
+                const group = new THREE.Group();
+                group.position.set(x, y, z);
+
+                const concMat = new THREE.MeshStandardMaterial({ color: 0x3f423f, roughness: 0.9 });
+                const mainBunker = new THREE.Mesh(new THREE.BoxGeometry(12.0, 3.8, 8.0), concMat);
+                mainBunker.position.y = 1.9;
+                group.add(mainBunker);
+
+                // Slit for machine gun
+                const slitMat = new THREE.MeshBasicMaterial({ color: 0x050505 });
+                const slit = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.4, 0.2), slitMat);
+                slit.position.set(0, 2.2, 4.01);
+                group.add(slit);
+
+                this.scene.add(group);
+                this.registerCollider(new THREE.Box3().setFromObject(group));
+            }
+
+            addFireEffect(x, y, z) {
+                const fireLight = new THREE.PointLight(0xff7700, 3.0, 12);
+                fireLight.position.set(x, y, z);
+                this.scene.add(fireLight);
+                this.fireLightAnims.push(fireLight);
+            }
+
+            /* =========================================================================
+               5. FPS VIEWMODEL & WEAPON MODELS
+               ========================================================================= */
+            setupFPSViewmodel() {
+                this.viewmodelGroup = new THREE.Group();
+                this.camera.add(this.viewmodelGroup);
+                this.scene.add(this.camera);
+
+                // Arms
+                this.armsGroup = new THREE.Group();
+                const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x3d4533, roughness: 0.8 });
+                const rightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.052, 0.44), sleeveMat);
+                rightArm.rotation.x = Math.PI / 2.8;
+                rightArm.rotation.z = -Math.PI / 7;
+                rightArm.position.set(0.26, -0.26, -0.32);
+                this.armsGroup.add(rightArm);
+                this.viewmodelGroup.add(this.armsGroup);
+
+                // Guns
+                this.weaponMeshes = {
+                    garand: this.buildGarandModel(),
+                    thompson: this.buildThompsonModel(),
+                    kar98k: this.buildKar98kModel(),
+                    m1911: this.buildM1911Model()
+                };
+
+                this.currentWeaponMesh = this.weaponMeshes.garand;
+                this.currentWeaponMesh.position.set(0.22, -0.22, -0.42);
+                this.viewmodelGroup.add(this.currentWeaponMesh);
+
+                this.muzzleLight = new THREE.PointLight(0xffd275, 0, 10);
+                this.muzzleLight.position.set(0, -0.05, -0.95);
+                this.viewmodelGroup.add(this.muzzleLight);
+            }
+
+            buildGarandModel() {
+                const group = new THREE.Group();
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x543d2b, roughness: 0.5 });
+                const metalMat = new THREE.MeshStandardMaterial({ color: 0x1f2124, roughness: 0.3, metalness: 0.85 });
+
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.075, 0.72), woodMat);
+                group.add(stock);
+                const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.054, 0.065, 0.22), metalMat);
+                receiver.position.set(0, 0.038, 0.05);
+                group.add(receiver);
+                const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.58), metalMat);
+                barrel.rotation.x = Math.PI / 2;
+                barrel.position.set(0, 0.032, -0.45);
+                group.add(barrel);
+                return group;
+            }
+
+            buildThompsonModel() {
+                const group = new THREE.Group();
+                const metalMat = new THREE.MeshStandardMaterial({ color: 0x1d1e20, roughness: 0.3, metalness: 0.85 });
+                const body = new THREE.Mesh(new THREE.BoxGeometry(0.060, 0.090, 0.48), metalMat);
+                group.add(body);
+                const mag = new THREE.Mesh(new THREE.BoxGeometry(0.030, 0.22, 0.050), metalMat);
+                mag.position.set(0, -0.14, -0.08);
+                group.add(mag);
+                return group;
+            }
+
+            buildKar98kModel() {
+                const group = new THREE.Group();
+                const woodMat = new THREE.MeshStandardMaterial({ color: 0x543d2b, roughness: 0.5 });
+                const stock = new THREE.Mesh(new THREE.BoxGeometry(0.050, 0.070, 0.78), woodMat);
+                group.add(stock);
+                return group;
+            }
+
+            buildM1911Model() {
+                const group = new THREE.Group();
+                const metalMat = new THREE.MeshStandardMaterial({ color: 0x222426, roughness: 0.3, metalness: 0.85 });
+                const slide = new THREE.Mesh(new THREE.BoxGeometry(0.040, 0.055, 0.22), metalMat);
+                group.add(slide);
+                const handle = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.12, 0.055), metalMat);
+                handle.position.set(0, -0.08, 0.04);
+                handle.rotation.x = -Math.PI / 8;
+                group.add(handle);
+                return group;
+            }
+
+            /* =========================================================================
+               6. SQUAD ALLIES (Zussman & Turner) AND AI ENEMIES
+               ========================================================================= */
+            createSoldierMesh(isAlly = false) {
+                const soldier = new THREE.Group();
+                const bodyMat = new THREE.MeshStandardMaterial({ color: isAlly ? 0x3d4533 : 0x484d47, roughness: 0.8 });
+                const helmetMat = new THREE.MeshStandardMaterial({ color: isAlly ? 0x2e3527 : 0x323632, roughness: 0.4, metalness: 0.4 });
+                const skinMat = new THREE.MeshStandardMaterial({ color: 0xdba281, roughness: 0.65 });
+
+                const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.68, 0.28), bodyMat);
+                torso.position.y = 0.98;
+                torso.castShadow = true;
+                soldier.add(torso);
+
+                const head = new THREE.Mesh(new THREE.SphereGeometry(0.145, 12, 12), skinMat);
+                head.position.y = 1.45;
+                soldier.add(head);
+
+                const helmet = new THREE.Mesh(new THREE.ConeGeometry(0.20, 0.17, 12), helmetMat);
+                helmet.position.set(0, 1.51, -0.01);
+                soldier.add(helmet);
+
+                // Hitboxes
+                const hitboxes = [];
+                const debugMat = new THREE.MeshBasicMaterial({ visible: false });
+
+                const headHB = new THREE.Mesh(new THREE.SphereGeometry(0.20, 8, 8), debugMat);
+                headHB.position.copy(head.position);
+                headHB.userData = { type: 'head', parentSoldier: soldier, multiplier: 2.5 };
+                soldier.add(headHB); hitboxes.push(headHB);
+
+                const torsoHB = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.32), debugMat);
+                torsoHB.position.copy(torso.position);
+                torsoHB.userData = { type: 'torso', parentSoldier: soldier, multiplier: 1.0 };
+                soldier.add(torsoHB); hitboxes.push(torsoHB);
+
+                soldier.userData = {
+                    health: 100,
+                    isDead: false,
+                    isAlly: isAlly,
+                    hitboxes: hitboxes,
+                    lastShot: 0
+                };
+
+                return soldier;
+            }
+
+            spawnSquadAllies() {
+                // Sgto. Turner
+                const turner = this.createSoldierMesh(true);
+                turner.position.set(-1.8, 0, 10);
+                turner.userData.name = "Sgto. Turner";
+                this.scene.add(turner);
+                this.allies.push(turner);
+
+                // Zussman
+                const zussman = this.createSoldierMesh(true);
+                zussman.position.set(1.8, 0, 10);
+                zussman.userData.name = "Zussman";
+                this.scene.add(zussman);
+                this.allies.push(zussman);
+            }
+
+            spawnEnemies() {
+                const enemySpawns = [
+                    // Phase 2 Patrols
+                    { x: -5, z: -20 }, { x: 4, z: -28 }, { x: -7, z: -42 }, { x: 6, z: -52 },
+                    // Phase 4 Bunker Garrison
+                    { x: -3, z: -88 }, { x: 5, z: -98 }, { x: -2, z: -115 }, { x: 2, z: -116 }, { x: 0, z: -118 }
+                ];
+
+                enemySpawns.forEach(pos => {
+                    const enemy = this.createSoldierMesh(false);
+                    enemy.position.set(pos.x, 0, pos.z);
+                    this.scene.add(enemy);
+                    this.enemies.push(enemy);
+                    enemy.userData.hitboxes.forEach(hb => this.hitboxes.push(hb));
+                });
+            }
+
+            /* =========================================================================
+               7. CONTROLS & BINDINGS
+               ========================================================================= */
+            bindEvents() {
+                document.getElementById('start-btn').addEventListener('click', () => {
+                    this.canvas.requestPointerLock();
+                    document.getElementById('start-screen').classList.add('hidden');
+                    document.getElementById('hud').classList.remove('hidden');
+                });
+
+                document.getElementById('resume-btn').addEventListener('click', () => {
+                    this.canvas.requestPointerLock();
+                    document.getElementById('pause-screen').classList.add('hidden');
+                });
+
+                document.getElementById('restart-btn').addEventListener('click', () => {
+                    window.location.reload();
+                });
+
+                document.addEventListener('pointerlockchange', () => {
+                    this.isLocked = (document.pointerLockElement === this.canvas);
+                    if (!this.isLocked && !this.isGameOver) {
+                        document.getElementById('pause-screen').classList.remove('hidden');
+                    }
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (!this.isLocked) return;
+                    const sens = this.isADS ? 0.0012 : 0.0022;
+                    this.camera.rotation.y -= e.movementX * sens;
+                    const pitch = this.camera.rotation.x - e.movementY * sens;
+                    this.camera.rotation.x = Math.max(-Math.PI / 2.2, Math.min(Math.PI / 2.2, pitch));
+                    this.camera.rotation.z = 0;
+                });
+
+                window.addEventListener('keydown', (e) => {
+                    const key = e.key.toLowerCase();
+                    if (key === 'w') this.keys.w = true;
+                    if (key === 's') this.keys.s = true;
+                    if (key === 'a') this.keys.a = true;
+                    if (key === 'd') this.keys.d = true;
+                    if (e.shiftKey) this.keys.shift = true;
+
+                    if (e.code === 'Space' && this.player.isOnGround) {
+                        this.player.velocity.y = this.player.jumpForce;
+                        this.player.isOnGround = false;
+                    }
+
+                    if (key === 'c' || e.key === 'Control') {
+                        this.player.isCrouching = true;
+                    }
+
+                    if (key === 'r') this.reloadWeapon();
+                    if (key === 'f') this.cycleSquadOrder();
+
+                    if (key === '1') this.switchWeapon('garand');
+                    if (key === '2') this.switchWeapon('thompson');
+                    if (key === '3') this.switchWeapon('kar98k');
+                    if (key === '4') this.switchWeapon('m1911');
+                });
+
+                window.addEventListener('keyup', (e) => {
+                    const key = e.key.toLowerCase();
+                    if (key === 'w') this.keys.w = false;
+                    if (key === 's') this.keys.s = false;
+                    if (key === 'a') this.keys.a = false;
+                    if (key === 'd') this.keys.d = false;
+                    if (!e.shiftKey) this.keys.shift = false;
+
+                    if (key === 'c' || e.key === 'Control') {
+                        this.player.isCrouching = false;
+                    }
+                });
+
+                window.addEventListener('mousedown', (e) => {
+                    if (!this.isLocked) return;
+                    if (e.button === 0) this.shootWeapon();
+                    if (e.button === 2) this.toggleADS(true);
+                });
+
+                window.addEventListener('mouseup', (e) => {
+                    if (!this.isLocked) return;
+                    if (e.button === 2) this.toggleADS(false);
+                });
+
+                window.addEventListener('contextmenu', e => e.preventDefault());
+            }
+
+            cycleSquadOrder() {
+                if (this.squadOrderState === "AVANZAR") this.squadOrderState = "MANTENER";
+                else if (this.squadOrderState === "MANTENER") this.squadOrderState = "REAGRUPAR";
+                else this.squadOrderState = "AVANZAR";
+
+                document.getElementById('squad-status-text').innerText = `[${this.squadOrderState}]`;
+                this.sound.playRadioChime();
+                this.triggerSubtitle("Daniels (Tú)", `¡Escuadrón, orden: ${this.squadOrderState}!`, 2000);
+            }
+
+            /* =========================================================================
+               8. COMBAT, SHOOTING & ADS MIRAS
+               ========================================================================= */
+            switchWeapon(key) {
+                if (!WEAPONS[key] || this.isReloading || this.currentWeaponKey === key) return;
+                this.viewmodelGroup.remove(this.currentWeaponMesh);
+                this.currentWeaponKey = key;
+                this.currentWeaponMesh = this.weaponMeshes[key];
+                this.currentWeaponMesh.position.set(0.22, -0.22, -0.42);
+                this.viewmodelGroup.add(this.currentWeaponMesh);
+                document.getElementById('weapon-name').innerText = WEAPONS[key].name;
+                this.updateAmmoHUD();
+                this.sound.playReload();
+            }
+
+            toggleADS(enable) {
+                this.isADS = enable;
+                this.camera.fov = enable ? 42 : 70;
+                this.camera.updateProjectionMatrix();
+
+                document.getElementById('crosshair-container').style.opacity = enable ? '0' : '1';
+
+                if (enable) {
+                    this.currentWeaponMesh.position.set(0, -0.118, -0.28);
+                    this.armsGroup.position.set(-0.26, 0.12, 0.1);
+                } else {
+                    this.currentWeaponMesh.position.set(0.22, -0.22, -0.42);
+                    this.armsGroup.position.set(0, 0, 0);
+                }
+            }
+
+            shootWeapon() {
+                const w = WEAPONS[this.currentWeaponKey];
+                const now = performance.now();
+
+                if (this.isReloading || w.currentClip <= 0) {
+                    if (w.currentClip <= 0) this.reloadWeapon();
+                    return;
+                }
+
+                if (now - this.lastShotTime < w.fireRate) return;
+
+                this.lastShotTime = now;
+                w.currentClip--;
+                this.stats.shotsFired++;
+                this.updateAmmoHUD();
+
+                this.sound.playShoot(this.currentWeaponKey);
+
+                this.muzzleLight.intensity = 4.0;
+                const overlay = document.getElementById('muzzle-flash-overlay');
+                overlay.style.opacity = '1';
+                setTimeout(() => {
+                    this.muzzleLight.intensity = 0;
+                    overlay.style.opacity = '0';
+                }, 40);
+
+                this.camera.rotation.x += w.recoil;
+                this.currentWeaponMesh.position.z += 0.05;
+
+                // Raycast Bullet Detection
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
+                const hits = raycaster.intersectObjects(this.hitboxes);
+
+                if (hits.length > 0) {
+                    const hit = hits[0];
+                    const hitData = hit.object.userData;
+                    const soldier = hitData.parentSoldier;
+
+                    if (soldier && !soldier.userData.isDead && !soldier.userData.isAlly) {
+                        this.stats.shotsHit++;
+                        soldier.userData.health -= w.damage * hitData.multiplier;
+                        const isHeadshot = (hitData.type === 'head');
+                        
+                        if (isHeadshot) this.stats.headshots++;
+
+                        this.showHitmarker();
+                        this.sound.playHitmarker(isHeadshot);
+
+                        if (soldier.userData.health <= 0) {
+                            soldier.userData.isDead = true;
+                            soldier.rotation.x = -Math.PI / 2;
+                            soldier.position.y = 0.2;
+
+                            this.stats.totalKills++;
+                            this.phaseKillsCount++;
+                            this.addKillLog(isHeadshot ? "BAJA EN LA CABEZA (+100)" : "ENEMIGO ELIMINADO (+50)");
+                            this.checkCampaignProgression();
+                        }
+                    }
+                }
+            }
+
+            reloadWeapon() {
+                const w = WEAPONS[this.currentWeaponKey];
+                if (this.isReloading || w.currentClip === w.clipSize || w.currentReserve <= 0) return;
+
+                this.isReloading = true;
+                document.getElementById('reload-msg').classList.remove('hidden');
+                this.sound.playReload();
+
+                setTimeout(() => {
+                    const needed = w.clipSize - w.currentClip;
+                    const available = Math.min(needed, w.currentReserve);
+                    w.currentClip += available;
+                    w.currentReserve -= available;
+
+                    this.isReloading = false;
+                    document.getElementById('reload-msg').classList.add('hidden');
+                    this.updateAmmoHUD();
+                }, w.reloadTime);
+            }
+
+            showHitmarker() {
+                const hm = document.getElementById('hit-marker');
+                hm.style.opacity = '1';
+                setTimeout(() => { hm.style.opacity = '0'; }, 100);
+            }
+
+            addKillLog(text) {
+                const log = document.getElementById('kill-log');
+                const item = document.createElement('div');
+                item.className = "bg-amber-600/20 border border-amber-500/40 text-amber-400 px-2.5 py-0.5 rounded shadow-lg";
+                item.innerText = text;
+                log.appendChild(item);
+                setTimeout(() => { item.remove(); }, 3000);
+            }
+
+            updateAmmoHUD() {
+                const w = WEAPONS[this.currentWeaponKey];
+                document.getElementById('ammo-clip').innerText = w.currentClip;
+                document.getElementById('ammo-reserve').innerText = w.currentReserve;
+            }
+
+            triggerSubtitle(speaker, text, duration = 3500) {
+                const box = document.getElementById('subtitle-box');
+                document.getElementById('subtitle-speaker').innerText = speaker;
+                document.getElementById('subtitle-text').innerText = `"${text}"`;
+                box.classList.remove('opacity-0');
+                box.classList.add('opacity-100');
+
+                if (this.subtitleTimeout) clearTimeout(this.subtitleTimeout);
+                this.subtitleTimeout = setTimeout(() => {
+                    box.classList.remove('opacity-100');
+                    box.classList.add('opacity-0');
+                }, duration);
+            }
+
+            /* =========================================================================
+               9. CAMPAIGN PROGRESSION SYSTEM & NPC AI
+               ========================================================================= */
+            checkCampaignProgression() {
+                const playerPos = this.player.position;
+                const currentObj = this.phaseObjectives[this.currentPhase - 1];
+
+                // Update UI Header
+                document.getElementById('phase-title').innerText = currentObj.title;
+                document.getElementById('objective-main').innerText = currentObj.main;
+                document.getElementById('objective-sub').innerText = currentObj.sub;
+
+                const distToTarget = playerPos.distanceTo(currentObj.targetPos);
+                document.getElementById('objective-distance').innerText = `[OBJ: ${Math.round(distToTarget)}m]`;
+
+                // Phase Transition Triggers
+                if (this.currentPhase === 1 && distToTarget < 12) {
+                    this.advancePhase(2, "Sgto. Turner", "¡Enemigos emboscados entre los blindados! ¡Cúbranse y fuego a discreción!");
+                } else if (this.currentPhase === 2 && this.phaseKillsCount >= 4) {
+                    this.advancePhase(3, "Zussman", "¡Carretera despejada! Turner está reuniendo al equipo en la granja destruida.");
+                } else if (this.currentPhase === 3 && distToTarget < 10) {
+                    this.advancePhase(4, "Sgto. Turner", "¡Daniels, toma el flanco del búnker! Su ametralladora nos tiene fijados.");
+                } else if (this.currentPhase === 4 && this.phaseKillsCount >= 8) {
+                    this.advancePhase(5, "Sgto. Turner", "¡Búnker neutralizado! Avancen a la posición de extracción final.");
+                } else if (this.currentPhase === 5 && distToTarget < 8) {
+                    this.triggerVictory();
+                }
+            }
+
+            advancePhase(nextPhase, speaker, dialogue) {
+                this.currentPhase = nextPhase;
+                this.sound.playRadioChime();
+                this.triggerSubtitle(speaker, dialogue, 5000);
+                this.checkCampaignProgression();
+            }
+
+            updateAI(delta) {
+                const playerPos = this.player.position;
+
+                // --- ALLY SQUAD AI ---
+                this.allies.forEach(ally => {
+                    if (ally.userData.isDead) return;
+
+                    let targetPos = playerPos.clone();
+                    if (this.squadOrderState === "AVANZAR") {
+                        targetPos.z -= 4; // Move slightly ahead
+                    } else if (this.squadOrderState === "MANTENER") {
+                        targetPos = ally.position; // Hold current position
+                    }
+
+                    const dist = ally.position.distanceTo(targetPos);
+                    if (dist > 3.5 && this.squadOrderState !== "MANTENER") {
+                        ally.lookAt(targetPos.x, ally.position.y, targetPos.z);
+                        const moveDir = new THREE.Vector3().subVectors(targetPos, ally.position).normalize();
+                        ally.position.addScaledVector(moveDir, 4.0 * delta);
+                    }
+                });
+
+                // --- ENEMY AI WITH STRICT LINE-OF-SIGHT ---
+                this.enemies.forEach(enemy => {
+                    if (enemy.userData.isDead) return;
+
+                    const dist = enemy.position.distanceTo(playerPos);
+                    if (dist < 40) {
+                        enemy.lookAt(playerPos.x, enemy.position.y, playerPos.z);
+
+                        // Line of Sight Raycast Check
+                        const eyePos = enemy.position.clone(); eyePos.y += 1.4;
+                        const dirToPlayer = new THREE.Vector3().subVectors(this.camera.position, eyePos).normalize();
+                        const losRay = new THREE.Raycaster(eyePos, dirToPlayer, 0, dist);
+                        
+                        let hasLineOfSight = true;
+                        for (let c of this.colliders) {
+                            if (losRay.ray.intersectsBox(c)) {
+                                hasLineOfSight = false;
+                                break;
+                            }
+                        }
+
+                        // Shoot only if visible
+                        if (hasLineOfSight) {
+                            const now = performance.now();
+                            if (now - enemy.userData.lastShot > 1400) {
+                                enemy.userData.lastShot = now;
+                                this.damagePlayer(10, enemy.position);
+                                this.sound.playShoot('mp40');
+                            }
+                        }
+                    }
+                });
+
+                this.fireLightAnims.forEach(fl => {
+                    fl.intensity = 2.5 + Math.random() * 1.5;
+                });
+            }
+
+            damagePlayer(amount, attackerPos) {
+                this.player.health = Math.max(0, this.player.health - amount);
+
+                document.getElementById('health-bar').style.width = `${this.player.health}%`;
+                document.getElementById('health-value').innerText = `${Math.ceil(this.player.health)} HP`;
+
+                const vig = document.getElementById('damage-vignette');
+                vig.style.opacity = '1';
+                setTimeout(() => { vig.style.opacity = '0'; }, 200);
+
+                // 360° Directional Red Arc Indicator
+                const dirElem = document.getElementById('damage-direction');
+                const dx = attackerPos.x - this.camera.position.x;
+                const dz = attackerPos.z - this.camera.position.z;
+                const angleToAttacker = Math.atan2(dx, dz);
+                const angleDeg = (angleToAttacker - this.camera.rotation.y) * (180 / Math.PI);
+
+                dirElem.style.transform = `rotate(${angleDeg}deg)`;
+                dirElem.style.opacity = '1';
+                setTimeout(() => { dirElem.style.opacity = '0'; }, 400);
+
+                if (this.player.health <= 0 && !this.isGameOver) {
+                    this.triggerGameOver(false);
+                }
+            }
+
+            /* =========================================================================
+               10. PHYSICAL PLAYER FPS CONTROLLER & WALL SLIDING
+               ========================================================================= */
+            getPlayerAABB(testPos) {
+                const r = this.player.radius;
+                const h = this.player.currentHeight;
+                return new THREE.Box3(
+                    new THREE.Vector3(testPos.x - r, testPos.y - h, testPos.z - r),
+                    new THREE.Vector3(testPos.x + r, testPos.y, testPos.z + r)
+                );
+            }
+
+            checkAABBCollision(testBox) {
+                for (let i = 0; i < this.colliders.length; i++) {
+                    if (testBox.intersectsBox(this.colliders[i])) {
+                        return this.colliders[i];
+                    }
+                }
+                return null;
+            }
+
+            updatePlayerPhysics(delta) {
+                if (!this.isLocked) return;
+
+                // Height transitions for crouch
+                const targetHeight = this.player.isCrouching ? this.player.crouchHeight : this.player.standingHeight;
+                this.player.currentHeight = THREE.MathUtils.lerp(this.player.currentHeight, targetHeight, 0.2);
+                this.player.eyeHeight = this.player.currentHeight * 0.92;
+
+                let currentSpeed = this.player.speed;
+                if (this.player.isCrouching) currentSpeed = this.player.crouchSpeed;
+                else if (this.keys.shift) currentSpeed = this.player.sprintSpeed;
+
+                const moveVector = new THREE.Vector3();
+                if (this.keys.w) moveVector.z -= 1;
+                if (this.keys.s) moveVector.z += 1;
+                if (this.keys.a) moveVector.x -= 1;
+                if (this.keys.d) moveVector.x += 1;
+                moveVector.normalize();
+
+                const euler = new THREE.Euler(0, this.camera.rotation.y, 0, 'YXZ');
+                moveVector.applyEuler(euler);
+
+                const targetVx = moveVector.x * currentSpeed;
+                const targetVz = moveVector.z * currentSpeed;
+
+                this.player.velocity.y += this.player.gravity * delta;
+
+                // Sub-stepping Physical Collision Resolution (Wall Sliding)
+                const steps = 4;
+                const subDelta = delta / steps;
+
+                for (let s = 0; s < steps; s++) {
+                    // X Axis Motion & Sliding
+                    let testPos = this.player.position.clone();
+                    testPos.x += targetVx * subDelta;
+                    let testBox = this.getPlayerAABB(testPos);
+
+                    if (!this.checkAABBCollision(testBox)) {
+                        this.player.position.x = testPos.x;
+                    }
+
+                    // Z Axis Motion & Sliding
+                    testPos = this.player.position.clone();
+                    testPos.z += targetVz * subDelta;
+                    testBox = this.getPlayerAABB(testPos);
+
+                    if (!this.checkAABBCollision(testBox)) {
+                        this.player.position.z = testPos.z;
+                    }
+
+                    // Y Axis Motion & Gravity/Jumping
+                    testPos = this.player.position.clone();
+                    testPos.y += this.player.velocity.y * subDelta;
+                    testBox = this.getPlayerAABB(testPos);
+
+                    const collidedBox = this.checkAABBCollision(testBox);
+                    if (collidedBox) {
+                        if (this.player.velocity.y < 0) {
+                            this.player.position.y = collidedBox.max.y + this.player.currentHeight;
+                            this.player.velocity.y = 0;
+                            this.player.isOnGround = true;
+                        } else {
+                            this.player.velocity.y = 0;
+                        }
+                    } else {
+                        this.player.position.y = testPos.y;
+                    }
+
+                    if (this.player.position.y <= this.player.currentHeight) {
+                        this.player.position.y = this.player.currentHeight;
+                        this.player.velocity.y = 0;
+                        this.player.isOnGround = true;
+                    }
+                }
+
+                // Camera Sync
+                this.camera.position.set(
+                    this.player.position.x,
+                    this.player.position.y - (this.player.currentHeight - this.player.eyeHeight),
+                    this.player.position.z
+                );
+
+                // Recoil Recovery Lerp
+                this.currentWeaponMesh.position.z = THREE.MathUtils.lerp(
+                    this.currentWeaponMesh.position.z,
+                    this.isADS ? -0.28 : -0.42,
+                    0.15
+                );
+
+                // Compass Heading
+                const heading = Math.round(((-this.camera.rotation.y * 180 / Math.PI) % 360 + 360) % 360);
+                document.getElementById('compass-dir').innerText = `N ${heading}°`;
+
+                this.checkCampaignProgression();
+            }
+
+            triggerVictory() {
+                this.triggerGameOver(true);
+            }
+
+            triggerGameOver(isVictory) {
+                this.isGameOver = true;
+                document.exitPointerLock();
+
+                const endScreen = document.getElementById('end-screen');
+                const endBox = document.getElementById('end-box');
+                const endTitle = document.getElementById('end-title');
+                const endSubtitle = document.getElementById('end-subtitle');
+
+                endScreen.classList.remove('hidden');
+
+                // Summary Stats Calculation
+                const acc = this.stats.shotsFired > 0 ? Math.round((this.stats.shotsHit / this.stats.shotsFired) * 100) : 0;
+                document.getElementById('stat-kills').innerText = this.stats.totalKills;
+                document.getElementById('stat-headshots').innerText = this.stats.headshots;
+                document.getElementById('stat-accuracy').innerText = `${acc}%`;
+
+                if (isVictory) {
+                    endBox.className = "max-w-lg w-full border border-amber-500 p-8 rounded-xl shadow-2xl bg-stone-900";
+                    endTitle.className = "text-4xl font-black uppercase mb-1 text-amber-400";
+                    endTitle.innerText = "¡MISIÓN COMPLETADA!";
+                    endSubtitle.innerText = "Has asegurado el sector de Normandía y eliminado el búnker enemigo.";
+                } else {
+                    endBox.className = "max-w-lg w-full border border-red-800 p-8 rounded-xl shadow-2xl bg-stone-900";
+                    endTitle.className = "text-4xl font-black uppercase mb-1 text-red-500";
+                    endTitle.innerText = "CAÍDO EN COMBATE";
+                    endSubtitle.innerText = "Tu escuadrón sucumbió al fuego enemigo.";
+                }
+            }
+
+            onWindowResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+
+            animate(timestamp) {
+                requestAnimationFrame((ts) => this.animate(ts));
+                const delta = 0.016;
+
+                if (this.isLocked && !this.isGameOver) {
+                    this.updatePlayerPhysics(delta);
+                    this.updateAI(delta);
+                }
+
+                this.renderer.render(this.scene, this.camera);
+            }
+        }
+
+        // Initialize Game
+        window.onload = () => {
+            new GameEngine();
+        };
+    </script>
+</body>
+</html>
